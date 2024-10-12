@@ -1,0 +1,299 @@
+<html><head><base href="https://websim.ai/live-chat/">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatRoulette - Bate-papo ao Vivo</title>
+<script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+<style>
+  :root {
+    --primary-color: #4a0e4e;
+    --secondary-color: #8e44ad;
+    --background-color: #f0f0f0;
+    --text-color: #333;
+    --accent-color: #e74c3c;
+  }
+
+  body {
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  header {
+    background-color: var(--primary-color);
+    color: white;
+    text-align: center;
+    padding: 1rem;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 2rem;
+  }
+
+  main {
+    display: flex;
+    flex-grow: 1;
+    padding: 1rem;
+  }
+
+  #chat-container {
+    flex: 2;
+    display: flex;
+    flex-direction: column;
+    background-color: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-right: 1rem;
+  }
+
+  #video-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #remote-video, #local-video {
+    width: 100%;
+    background-color: #000;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+  }
+
+  #remote-video {
+    flex: 2;
+  }
+
+  #local-video {
+    flex: 1;
+  }
+
+  #chat-messages {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 1rem;
+  }
+
+  #chat-input {
+    display: flex;
+    padding: 1rem;
+  }
+
+  #message-input {
+    flex-grow: 1;
+    padding: 0.5rem;
+    border: 1px solid var(--secondary-color);
+    border-radius: 5px;
+    margin-right: 0.5rem;
+  }
+
+  button {
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+
+  button:hover {
+    background-color: var(--primary-color);
+  }
+
+  #controls {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 1rem;
+  }
+
+  .control-button {
+    flex: 1;
+    margin: 0 0.5rem;
+  }
+
+  #skip-button {
+    background-color: var(--accent-color);
+  }
+
+  #skip-button:hover {
+    background-color: #c0392b;
+  }
+
+  .message {
+    margin-bottom: 0.5rem;
+    padding: 0.5rem;
+    border-radius: 5px;
+    max-width: 80%;
+  }
+
+  .message.sent {
+    background-color: var(--secondary-color);
+    color: white;
+    align-self: flex-end;
+  }
+
+  .message.received {
+    background-color: #ecf0f1;
+    color: var(--text-color);
+    align-self: flex-start;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .fade-in {
+    animation: fade-in 0.3s ease-in-out;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>ChatRoulette - Bate-papo ao Vivo</h1>
+  </header>
+
+  <main>
+    <div id="chat-container">
+      <div id="chat-messages"></div>
+      <div id="chat-input">
+        <input type="text" id="message-input" placeholder="Digite sua mensagem...">
+        <button id="send-button">Enviar</button>
+      </div>
+    </div>
+
+    <div id="video-container">
+      <video id="remote-video" autoplay playsinline></video>
+      <video id="local-video" autoplay playsinline muted></video>
+      <div id="controls">
+        <button id="video-toggle" class="control-button">Ligar/Desligar Vídeo</button>
+        <button id="audio-toggle" class="control-button">Ligar/Desligar Áudio</button>
+        <button id="skip-button" class="control-button">Pular</button>
+      </div>
+    </div>
+  </main>
+
+<script>
+const chatMessages = document.getElementById('chat-messages');
+const messageInput = document.getElementById('message-input');
+const sendButton = document.getElementById('send-button');
+const videoToggle = document.getElementById('video-toggle');
+const audioToggle = document.getElementById('audio-toggle');
+const skipButton = document.getElementById('skip-button');
+const localVideo = document.getElementById('local-video');
+const remoteVideo = document.getElementById('remote-video');
+
+let localStream;
+let peerConnection;
+let dataChannel;
+
+const configuration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' }
+  ]
+};
+
+async function init() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localVideo.srcObject = localStream;
+    createPeerConnection();
+  } catch (error) {
+    console.error('Erro ao acessar mídia:', error);
+  }
+}
+
+function createPeerConnection() {
+  peerConnection = new RTCPeerConnection(configuration);
+
+  localStream.getTracks().forEach(track => {
+    peerConnection.addTrack(track, localStream);
+  });
+
+  peerConnection.ontrack = event => {
+    remoteVideo.srcObject = event.streams[0];
+  };
+
+  dataChannel = peerConnection.createDataChannel('chat');
+  dataChannel.onmessage = handleReceivedMessage;
+
+  peerConnection.ondatachannel = event => {
+    const receivedChannel = event.channel;
+    receivedChannel.onmessage = handleReceivedMessage;
+  };
+
+  peerConnection.onicecandidate = event => {
+    if (event.candidate) {
+      // Enviar o candidato ICE para o servidor de sinalização
+    }
+  };
+}
+
+function handleReceivedMessage(event) {
+  const message = event.data;
+  displayMessage(message, 'received');
+}
+
+function displayMessage(message, type) {
+  const messageElement = document.createElement('div');
+  messageElement.textContent = message;
+  messageElement.classList.add('message', type, 'fade-in');
+  chatMessages.appendChild(messageElement);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+sendButton.addEventListener('click', () => {
+  const message = messageInput.value.trim();
+  if (message) {
+    dataChannel.send(message);
+    displayMessage(message, 'sent');
+    messageInput.value = '';
+  }
+});
+
+messageInput.addEventListener('keypress', (event) => {
+  if (event.key === 'Enter') {
+    sendButton.click();
+  }
+});
+
+videoToggle.addEventListener('click', () => {
+  const videoTrack = localStream.getVideoTracks()[0];
+  videoTrack.enabled = !videoTrack.enabled;
+  videoToggle.textContent = videoTrack.enabled ? 'Desligar Vídeo' : 'Ligar Vídeo';
+});
+
+audioToggle.addEventListener('click', () => {
+  const audioTrack = localStream.getAudioTracks()[0];
+  audioTrack.enabled = !audioTrack.enabled;
+  audioToggle.textContent = audioTrack.enabled ? 'Desligar Áudio' : 'Ligar Áudio';
+});
+
+skipButton.addEventListener('click', () => {
+  // Implementar lógica para pular para o próximo usuário
+  alert('Pulando para o próximo usuário...');
+  // Aqui você implementaria a lógica real para conectar com um novo usuário
+  // Isso envolveria fechar a conexão atual e iniciar uma nova
+});
+
+init();
+
+// Simulação de recebimento de mensagens (para demonstração)
+setInterval(() => {
+  const randomMessages = [
+    'Olá! Como vai?',
+    'Está gostando do chat?',
+    'De onde você é?',
+    'Qual é o seu hobby favorito?',
+    'Já viajou para algum lugar interessante?'
+  ];
+  const randomMessage = randomMessages[Math.floor(Math.random() * randomMessages.length)];
+  handleReceivedMessage({ data: randomMessage });
+}, 10000);
+</script>
+</body></html>
